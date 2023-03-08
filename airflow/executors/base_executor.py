@@ -121,6 +121,7 @@ class BaseExecutor(LoggingMixin):
             ti.refresh_from_db()
             if ti.state != State.RUNNING:
                 self.running[key] = command
+                # 异步提交
                 self.execute_async(key, command=command, queue=queue)
             else:
                 self.log.debug(

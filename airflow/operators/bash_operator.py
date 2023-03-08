@@ -70,7 +70,7 @@ class BashOperator(BaseOperator):
         self.log.info("Tmp dir root location: \n %s", gettempdir())
         with TemporaryDirectory(prefix='airflowtmp') as tmp_dir:
             with NamedTemporaryFile(dir=tmp_dir, prefix=self.task_id) as f:
-
+                # 临时目录下
                 f.write(bytes(bash_command, 'utf_8'))
                 f.flush()
                 fname = f.name
@@ -86,6 +86,7 @@ class BashOperator(BaseOperator):
                             signal.signal(getattr(signal, sig), signal.SIG_DFL)
                     os.setsid()
                 self.log.info("Running command: %s", bash_command)
+                # 执行bash脚本
                 sp = Popen(
                     ['bash', fname],
                     stdout=PIPE, stderr=STDOUT,

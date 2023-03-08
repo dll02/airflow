@@ -193,7 +193,7 @@ class DagBag(BaseDagBag, LoggingMixin):
         self.file_last_changed = {}
         self.executor = executor
         self.import_errors = {}
-
+        # 添加example
         if include_examples:
             example_dag_folder = os.path.join(
                 os.path.dirname(__file__),
@@ -242,6 +242,7 @@ class DagBag(BaseDagBag, LoggingMixin):
         """
         Given a path to a python module or zip file, this method imports
         the module and look for dag objects within it.
+        path 或 python module 或 zip file
         """
         found_dags = []
 
@@ -252,10 +253,12 @@ class DagBag(BaseDagBag, LoggingMixin):
         try:
             # This failed before in what may have been a git sync
             # race condition
+            # 磁盘文件上一次的更新时间
             file_last_changed_on_disk = datetime.fromtimestamp(os.path.getmtime(filepath))
             if only_if_updated \
                     and filepath in self.file_last_changed \
                     and file_last_changed_on_disk == self.file_last_changed[filepath]:
+                # 检查是否有改动
                 return found_dags
 
         except Exception as e:
@@ -267,6 +270,7 @@ class DagBag(BaseDagBag, LoggingMixin):
             if safe_mode and os.path.isfile(filepath):
                 with open(filepath, 'rb') as f:
                     content = f.read()
+                    # 如果不包括 DAG airflow
                     if not all([s in content for s in (b'DAG', b'airflow')]):
                         self.file_last_changed[filepath] = file_last_changed_on_disk
                         return found_dags
@@ -321,11 +325,13 @@ class DagBag(BaseDagBag, LoggingMixin):
 
         for m in mods:
             for dag in list(m.__dict__.values()):
+                # 解析python code 内容是否是DAG
                 if isinstance(dag, DAG):
                     if not dag.full_filepath:
                         dag.full_filepath = filepath
                     dag.is_subdag = False
                     self.bag_dag(dag, parent_dag=dag, root_dag=dag)
+                    # 添加至found_dags
                     found_dags.append(dag)
                     found_dags += dag.subdags
 
@@ -426,6 +432,8 @@ class DagBag(BaseDagBag, LoggingMixin):
                             continue
                         if not any(
                                 [re.findall(p, filepath) for p in patterns]):
+                            # 非 ignore_file内要过滤的文件
+                            # 每个文件执行process_file
                             ts = datetime.utcnow()
                             found_dags = self.process_file(
                                 filepath, only_if_updated=only_if_updated)
@@ -433,6 +441,7 @@ class DagBag(BaseDagBag, LoggingMixin):
                             td = datetime.utcnow() - ts
                             td = td.total_seconds() + (
                                 float(td.microseconds) / 1000000)
+                           # 统计状态信息
                             stats.append(FileLoadStat(
                                 filepath.replace(dag_folder, ''),
                                 td,
@@ -1485,11 +1494,13 @@ class TaskInstance(Base, LoggingMixin):
                     try:
                         with timeout(int(
                                 task_copy.execution_timeout.total_seconds())):
+                            # task_copy.execute(context=context) 根据 Operator 类型执行不同的处理逻辑
                             result = task_copy.execute(context=context)
                     except AirflowTaskTimeout:
                         task_copy.on_kill()
                         raise
                 else:
+                    # 没有超时设置
                     result = task_copy.execute(context=context)
 
                 # If the task returns a result, push an XCom containing it
@@ -2747,6 +2758,7 @@ class DagModel(Base):
 
     __tablename__ = "dag"
     """
+    对于每一个dag，都会在数据库创建一个记录
     These items are stored in the database for state related information
     """
     dag_id = Column(String(ID_LEN), primary_key=True)
@@ -2760,15 +2772,18 @@ class DagModel(Base):
     # Whether that DAG was seen on the last DagBag load
     is_active = Column(Boolean, default=False)
     # Last time the scheduler started
+    # 最近调度心跳时间
     last_scheduler_run = Column(DateTime)
     # Last time this DAG was pickled
     last_pickled = Column(DateTime)
     # Time when the DAG last received a refresh signal
     # (e.g. the DAG's "refresh" button was clicked in the web UI)
+    # 最近一次刷新时间
     last_expired = Column(DateTime)
     # Whether (one  of) the scheduler is scheduling this DAG at the moment
     scheduler_lock = Column(Boolean)
     # Foreign key to the latest pickle_id
+    # 序列化id
     pickle_id = Column(Integer)
     # The location of the file containing the DAG object
     fileloc = Column(String(2000))
@@ -2791,6 +2806,8 @@ class DagModel(Base):
 @functools.total_ordering
 class DAG(BaseDag, LoggingMixin):
     """
+    有向无环图：
+    1.有向无环图本身的性质，2.创建dagrun。
     A dag (directed acyclic graph) is a collection of tasks with directional
     dependencies. A dag also has a schedule, a start end an end date
     (optional). For each schedule, (say daily or hourly), the DAG needs to run
@@ -2907,6 +2924,7 @@ class DAG(BaseDag, LoggingMixin):
         self._description = description
         # set file location to caller source path
         self.fileloc = sys._getframe().f_back.f_code.co_filename
+        # 核心属性 <str, baseoperator>  包含了一个有向无环图上面的所有算子节点
         self.task_dict = dict()
         self.start_date = start_date
         self.end_date = end_date
@@ -2952,6 +2970,7 @@ class DAG(BaseDag, LoggingMixin):
             type(self) == type(other) and
             # Use getattr() instead of __dict__ as __dict__ doesn't return
             # correct values for properties.
+            # 比较关键属性
             all(getattr(self, c, None) == getattr(other, c, None)
                 for c in self._comps))
 
@@ -2989,7 +3008,7 @@ class DAG(BaseDag, LoggingMixin):
         _CONTEXT_MANAGER_DAG = self._old_context_manager_dag
 
     # /Context Manager ----------------------------------------------
-
+    # 获取调度时间
     def date_range(self, start_date, num=None, end_date=datetime.utcnow()):
         if num:
             end_date = None
@@ -2997,13 +3016,17 @@ class DAG(BaseDag, LoggingMixin):
             start_date=start_date, end_date=end_date,
             num=num, delta=self._schedule_interval)
 
+    #  下次调度时间
     def following_schedule(self, dttm):
+        # cron 类型计算
         if isinstance(self._schedule_interval, six.string_types):
             cron = croniter(self._schedule_interval, dttm)
             return cron.get_next(datetime)
+        # timedelta 类型计算
         elif isinstance(self._schedule_interval, timedelta):
             return dttm + self._schedule_interval
 
+    # 之前的一次调度
     def previous_schedule(self, dttm):
         if isinstance(self._schedule_interval, six.string_types):
             cron = croniter(self._schedule_interval, dttm)
@@ -3013,6 +3036,7 @@ class DAG(BaseDag, LoggingMixin):
 
     def get_run_dates(self, start_date, end_date=None):
         """
+        获取运行时间, 创建执行时间，添加时区信息
         Returns a list of dates between the interval received as parameter using this
         dag's schedule interval. Returned dates can be used for execution dates.
 
@@ -3029,14 +3053,16 @@ class DAG(BaseDag, LoggingMixin):
         using_end_date = end_date
 
         # dates for dag runs
+        # 找到各task的最小开始日期
         using_start_date = using_start_date or min([t.start_date for t in self.tasks])
+        # 结束时间
         using_end_date = using_end_date or datetime.utcnow()
 
         # next run date for a subdag isn't relevant (schedule_interval for subdags
         # is ignored) so we use the dag run's start date in the case of a subdag
         next_run_date = (self.normalize_schedule(using_start_date)
                          if not self.is_subdag else using_start_date)
-
+        # 循环添加next运行时间
         while next_run_date and next_run_date <= using_end_date:
             run_dates.append(next_run_date)
             next_run_date = self.following_schedule(next_run_date)
@@ -3045,6 +3071,7 @@ class DAG(BaseDag, LoggingMixin):
 
     def normalize_schedule(self, dttm):
         """
+        正规化时间
         Returns dttm + interval unless dttm is first interval then it returns dttm
         """
         following = self.following_schedule(dttm)
@@ -3159,6 +3186,7 @@ class DAG(BaseDag, LoggingMixin):
     @provide_session
     def concurrency_reached(self, session=None):
         """
+        是否达到最高并发
         Returns a boolean indicating whether the concurrency limit for this DAG
         has been reached
         """
@@ -3251,6 +3279,7 @@ class DAG(BaseDag, LoggingMixin):
     @property
     def subdags(self):
         """
+        获取子图列表
         Returns a list of the subdag objects associated to this DAG
         """
         # Check SubDag for class but don't check class directly, see
@@ -3266,6 +3295,7 @@ class DAG(BaseDag, LoggingMixin):
         return l
 
     def resolve_template_files(self):
+        """解析模板文件"""
         for t in self.tasks:
             t.resolve_template_files()
 
@@ -3300,6 +3330,7 @@ class DAG(BaseDag, LoggingMixin):
     def get_task_instances(
             self, session, start_date=None, end_date=None, state=None):
         TI = TaskInstance
+        # 如果没有起始时间
         if not start_date:
             start_date = (datetime.utcnow() - timedelta(30)).date()
             start_date = datetime.combine(start_date, datetime.min.time())
@@ -3317,10 +3348,16 @@ class DAG(BaseDag, LoggingMixin):
 
     @property
     def roots(self):
+        # List[BaseOperator]: Return nodes with no parents.
+        # These are first to execute and are called roots or root nodes.
         return [t for t in self.tasks if not t.downstream_list]
 
     def topological_sort(self):
         """
+         拓扑排序--->核心
+         创建一个空集合graph_sorted，将所有算子放入到graph_unsorted。
+         然后递归从graph_unsorted集合中算子，
+         如果算子的上游不存在与graph_unsorted，则将该算子加入到graph_sorted
         Sorts tasks in topographical order, such that a task comes after any of its
         upstream dependencies.
 
@@ -3356,10 +3393,12 @@ class DAG(BaseDag, LoggingMixin):
             acyclic = False
             for node in list(graph_unsorted):
                 for edge in node.upstream_list:
+                    # 算子的上游不存在与graph_unsorted，则将该算子加入到graph_sorted
                     if edge in graph_unsorted:
                         break
                 # no edges in upstream tasks
                 else:
+                    # 当上游算子都排序之后，才被添加
                     acyclic = True
                     graph_unsorted.remove(node)
                     graph_sorted.append(node)
@@ -3502,6 +3541,7 @@ class DAG(BaseDag, LoggingMixin):
         return count
 
     def __deepcopy__(self, memo):
+        # 深度拷贝
         # Swiwtcharoo to go around deepcopying objects coming through the
         # backdoor
         cls = self.__class__
@@ -3519,6 +3559,7 @@ class DAG(BaseDag, LoggingMixin):
     def sub_dag(self, task_regex, include_downstream=False,
                 include_upstream=True):
         """
+         部分task组成 dag --经过修剪
         Returns a subset of the current dag as a deep copy of the current dag
         based on a regex that should match one or many tasks, and includes
         upstream and downstream neighbours based on the flag passed.
@@ -3551,6 +3592,7 @@ class DAG(BaseDag, LoggingMixin):
         return dag
 
     def has_task(self, task_id):
+        # 是否拥有该task_id
         return task_id in (t.task_id for t in self.tasks)
 
     def get_task(self, task_id):
@@ -3575,6 +3617,7 @@ class DAG(BaseDag, LoggingMixin):
 
     @provide_session
     def pickle(self, session=None):
+        """序列化到数据库"""
         dag = session.query(
             DagModel).filter(DagModel.dag_id == self.dag_id).first()
         dp = None
@@ -3592,6 +3635,7 @@ class DAG(BaseDag, LoggingMixin):
 
     def tree_view(self):
         """
+        打印拓扑结构
         Shows an ascii tree representation of the DAG
         """
         def get_downstream(task, level=0):
@@ -3606,10 +3650,11 @@ class DAG(BaseDag, LoggingMixin):
     def add_task(self, task):
         """
         Add a task to the DAG
-
+        将任务添加dag中
         :param task: the task you want to add
         :type task: task
         """
+        # #修改最大开始时间，最小结束时间
         if not self.start_date and not task.start_date:
             raise AirflowException("Task is missing the start_date parameter")
         # if the task has no start date, assign it the same as the DAG
@@ -3640,11 +3685,12 @@ class DAG(BaseDag, LoggingMixin):
             self.tasks.append(task)
             self.task_dict[task.task_id] = task
             task.dag = self
-
+        # 任务数量
         self.task_count = len(self.tasks)
 
     def add_tasks(self, tasks):
         """
+        批量添加
         Add a list of tasks to the DAG
 
         :param tasks: a lit of tasks you want to add
@@ -3744,7 +3790,7 @@ class DAG(BaseDag, LoggingMixin):
         """
         Creates a dag run from this dag including the tasks associated with this dag.
         Returns the dag run.
-
+        根据指定参数 生成dagrun
         :param run_id: defines the the run id for this dag run
         :type run_id: string
         :param execution_date: the execution date of this dag run
@@ -3768,7 +3814,7 @@ class DAG(BaseDag, LoggingMixin):
             state=state
         )
         session.add(run)
-
+        # 在dagstat表标记为dag_id 为dirty
         DagStat.set_dirty(dag_id=self.dag_id, session=session)
 
         session.commit()
@@ -4367,6 +4413,7 @@ class DagStat(Base):
 
 class DagRun(Base, LoggingMixin):
     """
+    具体运行的dagRun
     DagRun describes an instance of a Dag. It can be created
     by the scheduler (for regular runs) or by an external trigger
     """

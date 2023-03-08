@@ -34,6 +34,7 @@ class SimpleDag(BaseDag):
     """
     A simplified representation of a DAG that contains all attributes
     required for instantiating and scheduling its associated tasks.
+    简化表示DAG所有实例化需要的属性和其相关的调度任务。
     """
 
     def __init__(self, dag, pickle_id=None):
@@ -116,8 +117,10 @@ class SimpleDag(BaseDag):
             return None
 
 
+
 class SimpleDagBag(BaseDagBag):
     """
+    在一个dag集合内定义其操作
     A collection of SimpleDag objects with some convenience methods.
     """
 
@@ -130,7 +133,7 @@ class SimpleDagBag(BaseDagBag):
         """
         self.simple_dags = simple_dags
         self.dag_id_to_simple_dag = {}
-
+        # 生成内部使用的字典，键为dag_id，value为dag
         for simple_dag in simple_dags:
             self.dag_id_to_simple_dag[simple_dag.dag_id] = simple_dag
 
@@ -457,14 +460,20 @@ class DagFileProcessorManager(LoggingMixin):
         :return: a list of SimpleDags that were produced by processors that
         have finished since the last time this was called
         :rtype: list[SimpleDag]
+        如果当前处理器个数低于预定的并发限制，并且还有要处理的文件，则启动新的处理器。
+        同时每次调用都更新正在运行的解析器，已经完成的解析器，则返回解析的 SimpleDag 列表
+        调度器周期性调用心跳，在该方法中启动新的处理器解析文件并返回解析结果。
         """
         finished_processors = {}
         """:type : dict[unicode, AbstractDagFileProcessor]"""
         running_processors = {}
         """:type : dict[unicode, AbstractDagFileProcessor]"""
-
+        # 每个file_path 一个解析器
+        # 同时每次调用都更新正在运行的解析器，已经完成的解析器，
         for file_path, processor in self._processors.items():
+            #如果解析完成，就将当前处理器存放在finished_processors字典类型中
             if processor.done:
+                # 完成 更新状态
                 self.log.info("Processor for %s finished", file_path)
                 now = datetime.utcnow()
                 finished_processors[file_path] = processor
@@ -473,11 +482,13 @@ class DagFileProcessorManager(LoggingMixin):
                 self._last_finish_time[file_path] = now
                 self._run_count[file_path] += 1
             else:
+                # 如果还在解析，记录在running_processors字典类型中
                 running_processors[file_path] = processor
         self._processors = running_processors
 
         # Collect all the DAGs that were found in the processed files
         simple_dags = []
+        # 从finished_processors收集解析结果
         for file_path, processor in finished_processors.items():
             if processor.result is None:
                 self.log.warning(
@@ -526,11 +537,13 @@ class DagFileProcessorManager(LoggingMixin):
             self._file_path_queue.extend(files_paths_to_queue)
 
         # Start more processors if we have enough slots and files to process
+        # 还有空闲的cpu 如果当前处理器个数低于预定的并发限制，并且还有要处理的文件，
         while (self._parallelism - len(self._processors) > 0 and
                        len(self._file_path_queue) > 0):
+            # 从等待队列取出一个file_path 解析其file_path
             file_path = self._file_path_queue.pop(0)
             processor = self._processor_factory(file_path)
-
+            # 启动新的DagFileProcessor处理器
             processor.start()
             self.log.info(
                 "Started a process (PID: %s) to generate tasks for %s",
@@ -540,7 +553,7 @@ class DagFileProcessorManager(LoggingMixin):
 
         # Update scheduler heartbeat count.
         self._run_count[self._heart_beat_key] += 1
-
+        # 返回解析的 SimpleDag 列表。
         return simple_dags
 
     def max_runs_reached(self):

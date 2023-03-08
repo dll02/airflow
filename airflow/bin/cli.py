@@ -323,7 +323,7 @@ def set_is_paused(is_paused, args, dag=None):
     msg = "Dag: {}, paused: {}".format(dag, str(dag.is_paused))
     print(msg)
 
-
+# run(args, dag=None)
 def run(args, dag=None):
     # Disable connection pooling to reduce the # of connections on the DB
     # while it's waiting for the task to finish.
@@ -336,6 +336,7 @@ def run(args, dag=None):
     log = LoggingMixin().log
 
     # Load custom airflow config
+    # local参数指定启动LocalTaskJob类型的Job，在LocalTaskJob内部指定参数raw从而启动_run_raw_task
     if args.cfg_path:
         with open(args.cfg_path, 'r') as conf_file:
             conf_dict = json.load(conf_file)
@@ -374,6 +375,7 @@ def run(args, dag=None):
     log.info("Running on host %s", hostname)
 
     with redirect_stdout(log, logging.INFO), redirect_stderr(log, logging.WARN):
+        # 如果是本地执行人物
         if args.local:
             run_job = jobs.LocalTaskJob(
                 task_instance=ti,
@@ -795,31 +797,36 @@ def webserver(args):
 
 def scheduler(args):
     print(settings.HEADER)
+    # 生成SchedulerJob类
     job = jobs.SchedulerJob(
         dag_id=args.dag_id,
         subdir=process_subdir(args.subdir),
         run_duration=args.run_duration,
         num_runs=args.num_runs,
         do_pickle=args.do_pickle)
-
+    # 守护进程
     if args.daemon:
+        # 设置进程的pid, stdout, stderr, log等信息
         pid, stdout, stderr, log_file = setup_locations("scheduler", args.pid, args.stdout, args.stderr, args.log_file)
+
         handle = setup_logging(log_file)
         stdout = open(stdout, 'w+')
         stderr = open(stderr, 'w+')
-
+        # DaemonContext上下文应用于创建守护进程
         ctx = daemon.DaemonContext(
-            pidfile=TimeoutPIDLockFile(pid, -1),
-            files_preserve=[handle],
+            pidfile=TimeoutPIDLockFile(pid, -1),# 记录守护进程id
+            files_preserve=[handle],# 指定哪些文件需要在守护进程模式下保持打开状态
             stdout=stdout,
             stderr=stderr,
         )
         with ctx:
+            # 运行在守护进程模式下
             job.run()
 
         stdout.close()
         stderr.close()
     else:
+        # 设置信号捕捉处理器
         signal.signal(signal.SIGINT, sigint_handler)
         signal.signal(signal.SIGTERM, sigint_handler)
         signal.signal(signal.SIGQUIT, sigquit_handler)
@@ -845,7 +852,9 @@ def serve_logs(args):
     flask_app.run(
         host='0.0.0.0', port=WORKER_LOG_SERVER_PORT)
 
-
+# Airflow 启动 Worker 开始：执行命令 airflow worker，
+# 所谓 Worker 其实是 Celery 的工作进程，
+# 一个 Worker 根据 concurrency 启动若干个守护进程，用于任务的并发执行。
 def worker(args):
     env = os.environ.copy()
     env['AIRFLOW_HOME'] = settings.AIRFLOW_HOME
@@ -877,6 +886,7 @@ def worker(args):
         )
         with ctx:
             sp = subprocess.Popen(['airflow', 'serve_logs'], env=env)
+            # 启动worker进程
             worker.run(**options)
             sp.kill()
 

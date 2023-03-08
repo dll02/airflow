@@ -1,6 +1,6 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
-#
+# 使用python解析器 去env寻找python路径
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
 # You may obtain a copy of the License at
@@ -21,7 +21,9 @@ if __name__ == '__main__':
     if configuration.get("core", "security") == 'kerberos':
         os.environ['KRB5CCNAME'] = configuration.get('kerberos', 'ccache')
         os.environ['KRB5_KTNAME'] = configuration.get('kerberos', 'keytab')
-
+    # 命令解析工厂初始化
     parser = CLIFactory.get_parser()
+    # 解析参数
     args = parser.parse_args()
+    # 执行参数指定的func
     args.func(args)

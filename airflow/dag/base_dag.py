@@ -19,9 +19,10 @@ from __future__ import unicode_literals
 
 from abc import ABCMeta, abstractmethod, abstractproperty
 
-
+# 有向无环图
 class BaseDag(object):
     """
+    虚类
     Base DAG object that both the SimpleDag and DAG inherit.
     """
     __metaclass__ = ABCMeta
@@ -37,6 +38,7 @@ class BaseDag(object):
     @abstractproperty
     def task_ids(self):
         """
+        含有的任务ID
         :return: A list of task IDs that are in this DAG
         :rtype: List[unicode]
         """
@@ -45,6 +47,7 @@ class BaseDag(object):
     @abstractproperty
     def full_filepath(self):
         """
+        文件路径
         :return: The absolute path to the file that contains this DAG's definition
         :rtype: unicode
         """
@@ -53,6 +56,7 @@ class BaseDag(object):
     @abstractmethod
     def concurrency(self):
         """
+        并行度
         :return: maximum number of tasks that can run simultaneously from this DAG
         :rtype: int
         """
@@ -61,6 +65,7 @@ class BaseDag(object):
     @abstractmethod
     def is_paused(self):
         """
+        是否暂停
         :return: whether this DAG is paused or not
         :rtype: bool
         """
@@ -69,19 +74,22 @@ class BaseDag(object):
     @abstractmethod
     def pickle_id(self):
         """
+        序列化ID
         :return: The pickle ID for this DAG, if it has one. Otherwise None.
         :rtype: unicode
         """
         raise NotImplementedError
 
-
+# BaseDagBag表示有向无环图的组合
 class BaseDagBag(object):
     """
+    dag集合
     Base object that both the SimpleDagBag and DagBag inherit.
     """
     @abstractproperty
     def dag_ids(self):
         """
+        包含的dag_id
         :return: a list of DAG IDs in this bag
         :rtype: List[unicode]
         """
@@ -90,6 +98,7 @@ class BaseDagBag(object):
     @abstractmethod
     def get_dag(self, dag_id):
         """
+        获取dag
         :return: whether the task exists in this bag
         :rtype: BaseDag
         """

@@ -78,6 +78,8 @@ class BaseTaskRunner(LoggingMixin):
             popen_prepend = ['sudo', '-H', '-u', self.run_as_user]
 
         self._cfg_path = cfg_path
+        # 生成命令：airflow run <dag_id> <task_id> <execution_date> --local --pool <pool> -sd <python_file>
+        # airflow run <dag_id> <task_id> <execution_date> --raw --job_id <job_id> --pool <pool> -sd <python_file>
         self._command = popen_prepend + self._task_instance.command_as_list(
             raw=True,
             pickle_id=local_task_job.pickle_id,

@@ -43,12 +43,17 @@ app = Celery(
     configuration.get('celery', 'CELERY_APP_NAME'),
     config_source=celery_configuration)
 
-
-@app.task
+# Celery 通过装饰器app.task创建Task对象，Task对象提供两个核心功能：
+# 将任务消息发送到队列和声明 Worker 接收到消息后需要执行的具体函数。
+#  command 被格式化：airflow run <dag_id> <task_id> <execution_date> --local --pool <pool> -sd <python_file>
+@app.task # 使用@app.task装饰器将该函数转换为Celery任务。
 def execute_command(command):
     log = LoggingMixin().log
     log.info("Executing command in Celery: %s", command)
     try:
+        # 检查返回的call back
+        # 如果需要处理任务的结果，则需要使用回调函数等机制来获取结果
+        # shell=True表示在shell中运行命令
         subprocess.check_call(command, shell=True)
     except subprocess.CalledProcessError as e:
         log.error(e)
@@ -68,14 +73,18 @@ class CeleryExecutor(BaseExecutor):
         self.tasks = {}
         self.last_state = {}
 
+    # execute_command是Celery Task任务实例，下文会介绍
     def execute_async(self, key, command,
                       queue=DEFAULT_CELERY_CONFIG['task_default_queue']):
         self.log.info( "[celery] queuing {key} through celery, "
                        "queue={queue}".format(**locals()))
+        # 通过 execute_async 异步提交到 Celery 集群，将返回的任务句柄保存在 tasks。
         self.tasks[key] = execute_command.apply_async(
             args=[command], queue=queue)
         self.last_state[key] = celery_states.PENDING
 
+    # 同步任务状态，根据任务状态进行不同处理
+    # Scheduler 通过 sync 方法轮询任务句柄获取任务状态，并根据任务状态回调 success 或者 fail 更新状态。
     def sync(self):
         self.log.debug("Inquiring about %s celery task(s)", len(self.tasks))
         for key, async in list(self.tasks.items()):

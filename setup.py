@@ -52,6 +52,7 @@ class CleanCommand(Command):
     def finalize_options(self):
         pass
     def run(self):
+        # 清理文件
         os.system('rm -vrf ./build ./dist ./*.pyc ./*.tgz ./*.egg-info')
 
 
@@ -206,7 +207,8 @@ def do_setup():
         package_data={'': ['airflow/alembic.ini', "airflow/git_version"]},
         include_package_data=True,
         zip_safe=False,
-        scripts=['airflow/bin/airflow'],
+        # 运行入口 可运行脚本
+        scripts=['airflow/bin/airflow'],#airflow.py加入环境变量
         install_requires=[
             'alembic>=0.8.3, <0.9',
             'bleach==2.1.2',
@@ -239,6 +241,7 @@ def do_setup():
             'thrift>=0.9.2',
             'zope.deprecation>=4.0, <5.0',
         ],
+        # 额外安装包
         extras_require={
             'all': devel_all,
             'all_dbs': all_dbs,
@@ -297,9 +300,10 @@ def do_setup():
         url='http://airflow.incubator.apache.org/',
         download_url=(
             'https://dist.apache.org/repos/dist/release/incubator/airflow/' + version),
+        # 额外命令
         cmdclass={
             'test': Tox,
-            'extra_clean': CleanCommand,
+            'extra_clean': CleanCommand,# 清理文件
         },
     )
 
