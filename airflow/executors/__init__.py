@@ -51,6 +51,7 @@ def _get_executor(executor_name):
     """
     Creates a new instance of the named executor. In case the executor name is not know in airflow,
     look for it in the plugins
+    根据指定的执行器name 设置具体的类
     """
     if executor_name == 'LocalExecutor':
         return LocalExecutor()

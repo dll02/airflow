@@ -29,6 +29,8 @@ class BaseTaskRunner(LoggingMixin):
     """
     Runs Airflow task instances by invoking the `airflow run` command with raw
     mode enabled in a subprocess.
+    运行任务
+    具体机制：收到一个命令行命令 airflow run ，开启一个进程执行命令
     """
 
     def __init__(self, local_task_job):
@@ -43,6 +45,7 @@ class BaseTaskRunner(LoggingMixin):
 
         popen_prepend = []
         cfg_path = None
+        # 任务执行者
         if self._task_instance.run_as_user:
             self.run_as_user = self._task_instance.run_as_user
         else:
@@ -53,6 +56,7 @@ class BaseTaskRunner(LoggingMixin):
 
         # Add sudo commands to change user if we need to. Needed to handle SubDagOperator
         # case using a SequentialExecutor.
+        # 配置相应的sudo 等权限 资源
         if self.run_as_user and (self.run_as_user != getpass.getuser()):
             self.log.debug("Planning to run as the %s user", self.run_as_user)
             cfg_dict = conf.as_dict(display_sensitive=True)
@@ -65,6 +69,7 @@ class BaseTaskRunner(LoggingMixin):
             temp_fd, cfg_path = mkstemp()
 
             # Give ownership of file to user; only they can read and write
+            # 改变文件所有者
             subprocess.call(
                 ['sudo', 'chown', self.run_as_user, cfg_path]
             )
@@ -80,6 +85,7 @@ class BaseTaskRunner(LoggingMixin):
         self._cfg_path = cfg_path
         # 生成命令：airflow run <dag_id> <task_id> <execution_date> --local --pool <pool> -sd <python_file>
         # airflow run <dag_id> <task_id> <execution_date> --raw --job_id <job_id> --pool <pool> -sd <python_file>
+        # 未来将要运行的命令
         self._command = popen_prepend + self._task_instance.command_as_list(
             raw=True,
             pickle_id=local_task_job.pickle_id,
@@ -91,6 +97,7 @@ class BaseTaskRunner(LoggingMixin):
         self.process = None
 
     def _read_task_logs(self, stream):
+        # 读取任务日志
         while True:
             line = stream.readline()
             if isinstance(line, bytes):
@@ -102,7 +109,7 @@ class BaseTaskRunner(LoggingMixin):
     def run_command(self, run_with, join_args=False):
         """
         Run the task command
-
+        开启子进程，运行命令，打印记录，返回结果
         :param run_with: list of tokens to run the task command with
         E.g. ['bash', '-c']
         :type run_with: list

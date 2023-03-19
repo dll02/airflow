@@ -67,6 +67,7 @@ class HiveOperator(BaseOperator):
         self.hiveconf_jinja_translate = hiveconf_jinja_translate
         self.hql = hql
         self.schema = schema
+        # 通过这个hive_cli_conn_id获取真实的hive配置信息
         self.hive_cli_conn_id = hive_cli_conn_id
         self.script_begin_tag = script_begin_tag
         self.run_as = None
@@ -78,6 +79,7 @@ class HiveOperator(BaseOperator):
         self.mapred_job_name = mapred_job_name
 
     def get_hook(self):
+        # 获取真正的hive beeline链接
         return HiveCliHook(
                         hive_cli_conn_id=self.hive_cli_conn_id,
                         run_as=self.run_as,
@@ -95,6 +97,7 @@ class HiveOperator(BaseOperator):
     def execute(self, context):
         self.log.info('Executing: %s', self.hql)
         self.hook = self.get_hook()
+        # 通过链接执行真正的命令
         self.hook.run_cli(hql=self.hql, schema=self.schema,
                           hive_conf=context_to_airflow_vars(context))
 

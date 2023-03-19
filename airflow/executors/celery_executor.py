@@ -30,8 +30,8 @@ PARALLELISM = configuration.get('core', 'PARALLELISM')
 '''
 To start the celery worker, run the command:
 airflow worker
+配置celery
 '''
-
 if configuration.has_option('celery', 'celery_config_options'):
     celery_configuration = import_string(
         configuration.get('celery', 'celery_config_options')
@@ -43,17 +43,29 @@ app = Celery(
     configuration.get('celery', 'CELERY_APP_NAME'),
     config_source=celery_configuration)
 
-# Celery 通过装饰器app.task创建Task对象，Task对象提供两个核心功能：
-# 将任务消息发送到队列和声明 Worker 接收到消息后需要执行的具体函数。
-#  command 被格式化：airflow run <dag_id> <task_id> <execution_date> --local --pool <pool> -sd <python_file>
-@app.task # 使用@app.task装饰器将该函数转换为Celery任务。
+
+@app.task
 def execute_command(command):
+    """
+        Celery 通过装饰器app.task创建Task对象，Task对象提供两个核心功能：
+        将任务消息发送到队列和声明 Worker 接收到消息后需要执行的具体函数。
+        command 被格式化：airflow run <dag_id> <task_id> <execution_date> --local --pool <pool> -sd <python_file>
+        使用@app.task装饰器将该函数转换为Celery任务。
+        与call方法类似，不同在于如果命令行执行成功，check_call返回返回码0，否则抛出subprocess.CalledProcessError异常。
+        subprocess.CalledProcessError异常包括returncode、cmd、output等属性，
+        其中returncode是子进程的退出码，cmd是子进程的执行命令，output为None。
+        当子进程退出异常时，则报错
+    """
     log = LoggingMixin().log
     log.info("Executing command in Celery: %s", command)
     try:
+        """
         # 检查返回的call back
         # 如果需要处理任务的结果，则需要使用回调函数等机制来获取结果
         # shell=True表示在shell中运行命令
+        # check_call(command, shell=True)本地执行命令
+        check_call(["ls", "-l"])
+        """
         subprocess.check_call(command, shell=True)
     except subprocess.CalledProcessError as e:
         log.error(e)
@@ -85,10 +97,12 @@ class CeleryExecutor(BaseExecutor):
 
     # 同步任务状态，根据任务状态进行不同处理
     # Scheduler 通过 sync 方法轮询任务句柄获取任务状态，并根据任务状态回调 success 或者 fail 更新状态。
+    # 批量同步一个批次执行的异步任务的状态
     def sync(self):
         self.log.debug("Inquiring about %s celery task(s)", len(self.tasks))
         for key, async in list(self.tasks.items()):
             try:
+                # 获得异步线程任务的状态
                 state = async.state
                 if self.last_state[key] != state:
                     if state == celery_states.SUCCESS:

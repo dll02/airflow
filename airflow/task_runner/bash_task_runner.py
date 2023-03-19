@@ -26,14 +26,18 @@ class BashTaskRunner(BaseTaskRunner):
         super(BashTaskRunner, self).__init__(local_task_job)
 
     def start(self):
+        # 开始运行入口
         self.process = self.run_command(['bash', '-c'], join_args=True)
 
     def return_code(self):
+        # 返回状态
         return self.process.poll()
 
     def terminate(self):
+        # 终止
         if self.process and psutil.pid_exists(self.process.pid):
             kill_process_tree(self.log, self.process.pid)
 
     def on_finish(self):
+        # 回调函数
         super(BashTaskRunner, self).on_finish()

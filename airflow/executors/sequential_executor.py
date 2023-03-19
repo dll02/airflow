@@ -21,6 +21,7 @@ from airflow.utils.state import State
 
 class SequentialExecutor(BaseExecutor):
     """
+    顺序执行器 串行执行任务
     This executor will only run one task instance at a time, can be used
     for debugging. It is also the only executor that can be used with sqlite
     since sqlite doesn't support multiple connections.
@@ -40,6 +41,8 @@ class SequentialExecutor(BaseExecutor):
             self.log.info("Executing command: %s", command)
 
             try:
+                # 直接任务，然后检查退出状态码
+                # 直接执行命令
                 subprocess.check_call(command, shell=True)
                 self.change_state(key, State.SUCCESS)
             except subprocess.CalledProcessError as e:

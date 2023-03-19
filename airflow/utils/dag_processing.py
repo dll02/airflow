@@ -160,6 +160,9 @@ class SimpleDagBag(BaseDagBag):
 
 def list_py_file_paths(directory, safe_mode=True):
     """
+    收集dag定义文件
+    递归遍历文件，找到Python文件
+    递归方式:宽度优先
     Traverse a directory and look for Python files.
 
     :param directory: the directory to traverse
@@ -173,43 +176,57 @@ def list_py_file_paths(directory, safe_mode=True):
     if directory is None:
         return []
     elif os.path.isfile(directory):
+        # 如果是文件 直接返回
         return [directory]
     elif os.path.isdir(directory):
+        # 文件夹
         patterns = []
         for root, dirs, files in os.walk(directory, followlinks=True):
+            # 文件夹 文件夹包含的文件夹  文件夹下面的文件
             ignore_file = [f for f in files if f == '.airflowignore']
+            # .airflowignore 类似.gitignore，用于定义被忽视的文件夹以及文件
             if ignore_file:
                 f = open(os.path.join(root, ignore_file[0]), 'r')
+                # 如果存在ignore 则识丁模式匹配
                 patterns += [p for p in f.read().split('\n') if p]
                 f.close()
             for f in files:
+                # 遍历文件
                 try:
                     file_path = os.path.join(root, f)
+                    # 拼接文件全path
                     if not os.path.isfile(file_path):
                         continue
                     mod_name, file_ext = os.path.splitext(
                         os.path.split(file_path)[-1])
+                    # 跳过非py zip文件
                     if file_ext != '.py' and not zipfile.is_zipfile(file_path):
                         continue
                     if any([re.findall(p, file_path) for p in patterns]):
+                        # 跳过ignore文件
                         continue
 
                     # Heuristic that guesses whether a Python file contains an
                     # Airflow DAG definition.
                     might_contain_dag = True
+                    # 判断是否包含dag
+
                     if safe_mode and not zipfile.is_zipfile(file_path):
                         with open(file_path, 'rb') as f:
                             content = f.read()
+                            # 检查content是否包含 dag airflow
                             might_contain_dag = all(
                                 [s in content for s in (b'DAG', b'airflow')])
 
                     if not might_contain_dag:
+                        # 不可能则跳过
                         continue
 
                     file_paths.append(file_path)
                 except Exception:
                     log = LoggingMixin().log
                     log.exception("Error while examining %s", f)
+    # 找到文件路径
     return file_paths
 
 
@@ -305,9 +322,12 @@ class DagFileProcessorManager(LoggingMixin):
     def __init__(self,
                  dag_directory,
                  file_paths,
+                 # 定义dag的paths
                  parallelism,
+                 # 同时运行的最大进程数
                  process_file_interval,
                  max_runs,
+                 # dag file最大的运行次数
                  processor_factory):
         """
         :param dag_directory: Directory where DAG definitions are kept. All
@@ -318,10 +338,10 @@ class DagFileProcessorManager(LoggingMixin):
         :param parallelism: maximum number of simultaneous process to run at once
         :type parallelism: int
         :param process_file_interval: process a file at most once every this
-        many seconds
+        many seconds 隔多久处理一次文件
         :type process_file_interval: float
         :param max_runs: The number of times to parse and schedule each file. -1
-        for unlimited.
+        for unlimited.编译调度文件的次数
         :type max_runs: int
         :type process_file_interval: float
         :param processor_factory: function that creates processors for DAG
@@ -428,6 +448,7 @@ class DagFileProcessorManager(LoggingMixin):
                                  if x in new_file_paths]
         # Stop processors that are working on deleted files
         filtered_processors = {}
+        # 对不在新的dag定义文件list内的运行的进程processor 杀死
         for file_path, processor in self._processors.items():
             if file_path in new_file_paths:
                 filtered_processors[file_path] = processor
@@ -464,12 +485,15 @@ class DagFileProcessorManager(LoggingMixin):
         同时每次调用都更新正在运行的解析器，已经完成的解析器，则返回解析的 SimpleDag 列表
         调度器周期性调用心跳，在该方法中启动新的处理器解析文件并返回解析结果。
         """
+        # 完成处理的文件
         finished_processors = {}
         """:type : dict[unicode, AbstractDagFileProcessor]"""
+        # 正在运行的文件
         running_processors = {}
         """:type : dict[unicode, AbstractDagFileProcessor]"""
         # 每个file_path 一个解析器
         # 同时每次调用都更新正在运行的解析器，已经完成的解析器，
+        # 遍历正在运行的子进程
         for file_path, processor in self._processors.items():
             #如果解析完成，就将当前处理器存放在finished_processors字典类型中
             if processor.done:
@@ -517,7 +541,7 @@ class DagFileProcessorManager(LoggingMixin):
             files_paths_at_run_limit = [file_path
                                         for file_path, num_runs in self._run_count.items()
                                         if num_runs == self._max_runs]
-
+            # 计算应该加入等待进程parse的队列
             files_paths_to_queue = list(set(self._file_paths) -
                                         set(file_paths_in_progress) -
                                         set(file_paths_recently_processed) -

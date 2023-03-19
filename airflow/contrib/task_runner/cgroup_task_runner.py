@@ -26,6 +26,8 @@ from airflow.utils.helpers import kill_process_tree
 
 class CgroupTaskRunner(BaseTaskRunner):
     """
+    在一定的资源环境下运行任务
+    种任务执行器可以做到资源隔离，不受其他任务的影响
     Runs the raw Airflow task in a cgroup that has containment for memory and
     cpu. It uses the resource requirements defined in the task to construct
     the settings for the cgroup.

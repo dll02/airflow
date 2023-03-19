@@ -44,6 +44,7 @@ class BaseExecutor(LoggingMixin):
         pass
 
     def queue_command(self, task_instance, command, priority=1, queue=None):
+        # 加入任务队列
         key = task_instance.key
         if key not in self.queued_tasks and key not in self.running:
             self.log.info("Adding to queue: %s", command)
@@ -95,7 +96,9 @@ class BaseExecutor(LoggingMixin):
     def heartbeat(self):
 
         # Triggering new jobs
+        # open_slots 空闲资源数量
         if not self.parallelism:
+            # 线性
             open_slots = len(self.queued_tasks)
         else:
             open_slots = self.parallelism - len(self.running)
@@ -109,6 +112,7 @@ class BaseExecutor(LoggingMixin):
             key=lambda x: x[1][1],
             reverse=True)
         for i in range(min((open_slots, len(self.queued_tasks)))):
+            # 命令  优先级    队列名字   任务
             key, (command, _, queue, ti) = sorted_queue.pop(0)
             # TODO(jlowin) without a way to know what Job ran which tasks,
             # there is a danger that another Job started running a task
@@ -145,6 +149,7 @@ class BaseExecutor(LoggingMixin):
 
     def get_event_buffer(self, dag_ids=None):
         """
+        获取缓存的任务执行结果
         Returns and flush the event buffer. In case dag_ids is specified
         it will only return and flush events for the given dag_ids. Otherwise
         it returns and flushes all

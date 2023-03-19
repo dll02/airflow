@@ -375,7 +375,7 @@ def run(args, dag=None):
     log.info("Running on host %s", hostname)
 
     with redirect_stdout(log, logging.INFO), redirect_stderr(log, logging.WARN):
-        # 如果是本地执行人物
+        # 如果是本地执行任务
         if args.local:
             run_job = jobs.LocalTaskJob(
                 task_instance=ti,

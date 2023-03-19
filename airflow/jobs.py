@@ -75,13 +75,13 @@ class BaseJob(Base, LoggingMixin):
     id = Column(Integer, primary_key=True)
     dag_id = Column(String(ID_LEN),)
     state = Column(String(20))
-    job_type = Column(String(30))
+    job_type = Column(String(30)) # 作业类型
     start_date = Column(DateTime())
     end_date = Column(DateTime())
-    latest_heartbeat = Column(DateTime())
-    executor_class = Column(String(500))
-    hostname = Column(String(500))
-    unixname = Column(String(1000))
+    latest_heartbeat = Column(DateTime()) # 最后一次心跳状态
+    executor_class = Column(String(500)) # 运行器类型
+    hostname = Column(String(500)) #运行主机
+    unixname = Column(String(1000)) # 用户名
 
     __mapper_args__ = {
         'polymorphic_on': job_type,
@@ -99,6 +99,7 @@ class BaseJob(Base, LoggingMixin):
             *args, **kwargs):
         self.hostname = socket.getfqdn()
         self.executor = executor
+        # 执行器的类名字
         self.executor_class = executor.__class__.__name__
         self.start_date = datetime.utcnow()
         self.latest_heartbeat = datetime.utcnow()
@@ -136,6 +137,7 @@ class BaseJob(Base, LoggingMixin):
 
     def heartbeat(self):
         '''
+        周期性检查job的完成情况
         Heartbeats update the job's entry in the database with a timestamp
         for the latest_heartbeat and allows for the job to be killed
         externally. This allows at the system level to monitor what is
@@ -223,6 +225,8 @@ class BaseJob(Base, LoggingMixin):
     @provide_session
     def reset_state_for_orphaned_tasks(self, filter_by_dag_run=None, session=None):
         """
+        当数据库中任务实例的状态为被调度或者进入队列，而该任务不存在运行器中，将其任务的状态转
+        为None,然后由调度器重新放入任务队列中
         This function checks if there are any tasks in the dagrun (or all)
         that have a scheduled state but are not known by the
         executor. If it finds those it will reset the state to None
@@ -235,14 +239,18 @@ class BaseJob(Base, LoggingMixin):
         :return: the TIs reset (in expired SQLAlchemy state)
         :rtype: List(TaskInstance)
         """
+        # 执行器中队列任务
         queued_tis = self.executor.queued_tasks
         # also consider running as the state might not have changed in the db yet
+        # 正在运行的任务
         running_tis = self.executor.running
 
+        # 查询数据库-->数据库中的状态为调度或者进入队列状态
         resettable_states = [State.SCHEDULED, State.QUEUED]
         TI = models.TaskInstance
         DR = models.DagRun
         if filter_by_dag_run is None:
+            # 查出数据库中正在运行的task
             resettable_tis = (
                 session
                 .query(TI)
@@ -257,14 +265,17 @@ class BaseJob(Base, LoggingMixin):
                     DR.run_id.notlike(BackfillJob.ID_PREFIX + '%'),
                     TI.state.in_(resettable_states))).all()
         else:
+            # 由DagRun实例进行获取任务实例
             resettable_tis = filter_by_dag_run.get_task_instances(state=resettable_states,
                                                                   session=session)
+        # 需要重的任务    数据库显示已经在运行或者进入队列，而实际上executor并未感知
         tis_to_reset = []
         # Can't use an update here since it doesn't support joins
         for ti in resettable_tis:
+            # 既不在排队 也不在执行中
             if ti.key not in queued_tis and ti.key not in running_tis:
                 tis_to_reset.append(ti)
-
+        # 拼sql 查询
         filter_for_tis = ([and_(TI.dag_id == ti.dag_id,
                                 TI.task_id == ti.task_id,
                                 TI.execution_date == ti.execution_date)
@@ -277,6 +288,7 @@ class BaseJob(Base, LoggingMixin):
             .filter(or_(*filter_for_tis), TI.state.in_(resettable_states))
             .with_for_update()
             .all())
+        # 重置状态
         for ti in reset_tis:
             ti.state = State.NONE
             session.merge(ti)
@@ -291,6 +303,7 @@ class BaseJob(Base, LoggingMixin):
         return reset_tis
 
 # Dag文件处理器 DAG 目录中的文件列表
+# 处理器代理，专门管理负责解析dag文件
 class DagFileProcessor(AbstractDagFileProcessor, LoggingMixin):
     """Helps call SchedulerJob.process_file() in a separate process."""
 
@@ -382,7 +395,7 @@ class DagFileProcessor(AbstractDagFileProcessor, LoggingMixin):
                 # 启动新的进程 生成SchedulerJob
                 # 通过新的 SchedulerJob 实例解析 DAG 文件
                 scheduler_job = SchedulerJob(dag_ids=dag_id_white_list, log=log)
-                # SchedulerJob解析指定的path
+                # SchedulerJob解析指定的path，执行结果 返回
                 result = scheduler_job.process_file(file_path,
                                                     pickle_dags)
                 # 将SimpleDags加入队列
@@ -512,6 +525,7 @@ class DagFileProcessor(AbstractDagFileProcessor, LoggingMixin):
 
 class SchedulerJob(BaseJob):
     """
+    调度任务
     This SchedulerJob runs for a specific time interval and schedules the jobs
     指定时间运行，调度ready的jobs。分析待运行的task的依赖是否被满足。
     that are ready to run. It figures out the latest runs for each
@@ -543,6 +557,7 @@ class SchedulerJob(BaseJob):
         :param dag_id: if specified, only schedule tasks with this DAG ID
         :type dag_id: unicode
         :param dag_ids: if specified, only schedule tasks with these DAG IDs
+                        如果指定，只调度具有这些DAG id的任务
         :type dag_ids: list[unicode]
         :param subdir: directory containing Python files with Airflow DAG
         definitions, or a specific path to a file
@@ -571,14 +586,16 @@ class SchedulerJob(BaseJob):
 
         self.do_pickle = do_pickle
         super(SchedulerJob, self).__init__(*args, **kwargs)
-
+        # 心跳频率
         self.heartrate = conf.getint('scheduler', 'SCHEDULER_HEARTBEAT_SEC')
+        # 最大线程数
         self.max_threads = conf.getint('scheduler', 'max_threads')
 
         if log:
             self._log = log
 
         self.using_sqlite = False
+        # 检查是否是sqlite
         if 'sqlite' in conf.get('core', 'sql_alchemy_conn'):
             if self.max_threads > 1:
                 self.log.error("Cannot use more than 1 thread when using sqlite. Setting max_threads to 1")
@@ -586,14 +603,17 @@ class SchedulerJob(BaseJob):
             self.using_sqlite = True
 
         # How often to scan the DAGs directory for new files. Default to 5 minutes.
+        # 扫描dag文件夹的频率
         self.dag_dir_list_interval = conf.getint('scheduler',
                                                  'dag_dir_list_interval')
         # How often to print out DAG file processing stats to the log. Default to
         # 30 seconds.
+        # 打印dag 文件状态的频率
         self.print_stats_interval = conf.getint('scheduler',
                                                 'print_stats_interval')
         # Parse and schedule each file no faster than this interval. Default
         # to 3 minutes.
+        # 解析和调度每个文件的速度不超过此间隔
         self.file_process_interval = file_process_interval
 
         self.max_tis_per_query = conf.getint('scheduler', 'max_tis_per_query')
@@ -604,6 +624,7 @@ class SchedulerJob(BaseJob):
     @provide_session
     def manage_slas(self, dag, session=None):
         """
+        管理时区
         Finding all tasks that have SLAs defined, and sending alert emails
         where needed. New SLA misses are also recorded in the database.
 
@@ -637,6 +658,7 @@ class SchedulerJob(BaseJob):
         ).all()
 
         ts = datetime.utcnow()
+        # 缺少时区
         SlaMiss = models.SlaMiss
         for ti in max_tis:
             task = dag.get_task(ti.task_id)
@@ -644,7 +666,9 @@ class SchedulerJob(BaseJob):
             if task.sla:
                 dttm = dag.following_schedule(dttm)
                 while dttm < datetime.utcnow():
+                    # 下一次调度时间
                     following_schedule = dag.following_schedule(dttm)
+                    # 加完时区偏差 没有超出现在时间
                     if following_schedule + task.sla < datetime.utcnow():
                         session.merge(models.SlaMiss(
                             task_id=ti.task_id,
@@ -664,6 +688,7 @@ class SchedulerJob(BaseJob):
 
         if slas:
             sla_dates = [sla.execution_date for sla in slas]
+            # 查询出执行时间在缺失时区的列表中的ti
             qry = (
                 session
                 .query(TI)
@@ -692,6 +717,7 @@ class SchedulerJob(BaseJob):
             email_sent = False
             notification_sent = False
             if dag.sla_miss_callback:
+                # 发送时区缺失的警告邮件
                 # Execute the alert callback
                 self.log.info(' --------------> ABOUT TO CALL SLA MISS CALL BACK ')
                 dag.sla_miss_callback(dag, task_list, blocking_task_list, slas, blocking_tis)
@@ -733,6 +759,7 @@ class SchedulerJob(BaseJob):
     @provide_session
     def clear_nonexistent_import_errors(session, known_file_paths):
         """
+        删除不在dag files里的出错任务
         Clears import errors for files that no longer exist.
 
         :param session: session for ORM operations
@@ -824,17 +851,25 @@ class SchedulerJob(BaseJob):
             last_scheduled_run = qry.scalar()
 
             # don't schedule @once again
+            # 仅仅运行一次，且已经运行过，则不再创建
             if dag.schedule_interval == '@once' and last_scheduled_run:
                 return None
 
             # don't do scheduler catchup for dag's that don't have dag.catchup = True
+            # 如果 dag.catchup =false 不做调度
+            # 如果补充过去的任务或者仅仅跑一次 -->修改dag start time
             if not dag.catchup:
                 # The logic is that we move start_date up until
                 # one period before, so that datetime.utcnow() is AFTER
                 # the period end, and the job can be created...
+                # 以现在为起点进行调度
                 now = datetime.utcnow()
+                                # 下次开始时间
                 next_start = dag.following_schedule(now)
+                # 最近一次开始时间
                 last_start = dag.previous_schedule(now)
+
+                # 与现在的时间进行对比，new start 新的dagrun开始时间
                 if next_start <= now:
                     new_start = last_start
                 else:
@@ -846,7 +881,9 @@ class SchedulerJob(BaseJob):
                 else:
                     dag.start_date = new_start
 
+            # 下次运行日期
             next_run_date = None
+            # 第一次跑
             if not last_scheduled_run:
                 # First run
                 task_start_dates = [t.start_date for t in dag.tasks]
@@ -857,9 +894,11 @@ class SchedulerJob(BaseJob):
                         next_run_date
                     )
             else:
+                                # 在上次的基础上接着跑
                 next_run_date = dag.following_schedule(last_scheduled_run)
 
             # make sure backfills are also considered
+            # dag.start_date为基本底线
             last_run = dag.get_last_dagrun(session=session)
             if last_run and next_run_date:
                 while next_run_date <= last_run.execution_date:
@@ -878,30 +917,36 @@ class SchedulerJob(BaseJob):
                 )
 
             # don't ever schedule in the future
+            # 不运行未来的任务
             if next_run_date > datetime.utcnow():
                 return
 
             # this structure is necessary to avoid a TypeError from concatenating
             # NoneType
+            # period_end 期间结束时间
             if dag.schedule_interval == '@once':
                 period_end = next_run_date
             elif next_run_date:
                 period_end = dag.following_schedule(next_run_date)
 
             # Don't schedule a dag beyond its end_date (as specified by the dag param)
+            # 超过结束时间，不运行
             if next_run_date and dag.end_date and next_run_date > dag.end_date:
                 return
 
             # Don't schedule a dag beyond its end_date (as specified by the task params)
             # Get the min task end date, which may come from the dag.default_args
+            # 最小任务结束时间
             min_task_end_date = []
             task_end_dates = [t.end_date for t in dag.tasks if t.end_date]
             if task_end_dates:
                 min_task_end_date = min(task_end_dates)
             if next_run_date and min_task_end_date and next_run_date > min_task_end_date:
+                # 当时间大于最小任务结束时间时,不运行
                 return
-
+            # 创建 next_dag_run 返回
             if next_run_date and period_end and period_end <= datetime.utcnow():
+                # 只有期间结束时间小于当前时间时，才触发任务
                 next_run = dag.create_dagrun(
                     run_id=DagRun.ID_PREFIX + next_run_date.isoformat(),
                     execution_date=next_run_date,
@@ -913,6 +958,8 @@ class SchedulerJob(BaseJob):
 
     def _process_task_instances(self, dag, queue):
         """
+        添加任务实例
+        queue->ti_keys_to_schedule： 可运行的任务实例往这里添加
         This method schedules the tasks for a single DAG by looking at the
         active DAG runs and adding task instances that should run to the
         queue.
@@ -947,17 +994,20 @@ class SchedulerJob(BaseJob):
             run.update_state(session=session)
             if run.state == State.RUNNING:
                 make_transient(run)
+                # 将正在运行的dag添加到active_dag_runs
                 active_dag_runs.append(run)
 
         for run in active_dag_runs:
             self.log.debug("Examining active DAG run: %s", run)
             # this needs a fresh session sometimes tis get detached
+            # 从执行器会轮询数据库 task_instances 状态为  NONE  UP_FOR_RETRY
             tis = run.get_task_instances(state=(State.NONE,
                                                 State.UP_FOR_RETRY))
 
             # this loop is quite slow as it uses are_dependencies_met for
             # every task (in ti.is_runnable). This is also called in
             # update_state above which has already checked these tasks
+            # 轮询检查是否依赖被满足 当条件满足时，触发任务
             for ti in tis:
                 task = dag.get_task(ti.task_id)
 
@@ -967,7 +1017,7 @@ class SchedulerJob(BaseJob):
                 # future: remove adhoc
                 if task.adhoc:
                     continue
-
+                # 是否满足依赖
                 if ti.are_dependencies_met(
                         dep_context=DepContext(flag_upstream_failed=True),
                         session=session):
@@ -1373,7 +1423,9 @@ class SchedulerJob(BaseJob):
                                                               session=session)
         # 在数据库中更改任务状态
         if self.max_tis_per_query == 0:
+            # 任务经过 _change_state_for_executable_task_instances 的处理后
             # 数据库中的任务实例状态就变成 queued 排队状态了，同时也加入到了 executor 的队列 queued_tasks。
+            # SCHEDULED ->
             tis_with_state_changed = self._change_state_for_executable_task_instances(
                 executable_tis,
                 states,
@@ -1403,22 +1455,24 @@ class SchedulerJob(BaseJob):
 
     def _process_dags(self, dagbag, dags, tis_out):
         """
+        dagbag, dags, ti_keys_to_schedule
         Iterates over the dags and processes them. Processing includes:
-
+        tis_out： 添加生成TaskInstance的队列
         1. Create appropriate DagRun(s) in the DB.
         2. Create appropriate TaskInstance(s) in the DB.
         3. Send emails for tasks that have missed SLAs.
 
-        :param dagbag: a collection of DAGs to process
+        :param dagbag: a collection of DAGs to process 待处理的整个dag集合
         :type dagbag: models.DagBag
-        :param dags: the DAGs from the DagBag to process
+        :param dags: the DAGs from the DagBag to process 该进程需要处理的dags
         :type dags: DAG
-        :param tis_out: A queue to add generated TaskInstance objects
+        :param tis_out: A queue to add generated TaskInstance objects 生成的待调度的tis队列
         :type tis_out: multiprocessing.Queue[TaskInstance]
         :return: None
         """
         for dag in dags:
             dag = dagbag.get_dag(dag.dag_id)
+            # 获取真正定义在code中的DAG
             if dag.is_paused:
                 self.log.info("Not processing DAG %s since it's paused", dag.dag_id)
                 continue
@@ -1548,6 +1602,7 @@ class SchedulerJob(BaseJob):
         self.log.info(log_str)
 
     def _execute(self):
+        # 调度器入口
         self.log.info("Starting the scheduler")
         # ping数据库确定能访问db
         pessimistic_connection_handling()
@@ -1572,21 +1627,27 @@ class SchedulerJob(BaseJob):
 
         # Build up a list of Python files that could contain DAGs
         self.log.info("Searching for files in %s", self.subdir)
-        # 设置dag读取文件夹
+        # 设置dag读取文件夹 搜集python定义文件
         known_file_paths = list_py_file_paths(self.subdir)
         self.log.info("There are %s files in %s", len(known_file_paths), self.subdir)
 
         # 处理器工厂，生成DagFileProcessor对象，下面会用到
         def processor_factory(file_path):
+            # 子进程处理文件：
+            # file_path 需要处理的文件路径
+            # scheduleJob对象的参数
+            # pickle_dags：是否应该序列号为pickled格式
+            # dag_ids：如果指定则只调度指定的dag_ids, dag_id_white_list
             return DagFileProcessor(file_path,
                                     pickle_dags,
                                     self.dag_ids)
-
+        # 处理dag定义文件 启动一个子进程处理dag文件
         processor_manager = DagFileProcessorManager(self.subdir,
                                                     known_file_paths,
                                                     self.max_threads,
                                                     self.file_process_interval,
                                                     self.num_runs,
+                                                    # 定义最大dag_run并发数
                                                     processor_factory)
 
         try:
@@ -1624,7 +1685,7 @@ class SchedulerJob(BaseJob):
                     for child in child_processes:
                         self.log.info("Killing child PID: %s", child.pid)
                         child.kill()
-                        child.wait()
+                         child.wait()
 
     # 很重要的方法，确定调度器的主要流程
     def _execute_helper(self, processor_manager):
@@ -1671,8 +1732,10 @@ class SchedulerJob(BaseJob):
                                           last_dag_dir_refresh_time).total_seconds()
 
             if elapsed_time_since_refresh > self.dag_dir_list_interval:
+                # 如果上次刷新时间超过了时间间隔
                 # Build up a list of Python files that could contain DAGs
                 self.log.info("Searching for files in %s", self.subdir)
+                # 重新刷新dag_file_lists
                 known_file_paths = list_py_file_paths(self.subdir)
                 last_dag_dir_refresh_time = datetime.utcnow()
                 self.log.info("There are %s files in %s", len(known_file_paths), self.subdir)
@@ -1704,6 +1767,7 @@ class SchedulerJob(BaseJob):
                 # isn't running, mark the task instance as FAILED so we don't try
                 # to re-run it.
                 # 处理设置为非运行状态的dag 如果是UP_FOR_RETRY直接改为FAILED
+                # 因为是更新过的new dag 所以重试的要置为失败
                 self._change_state_for_tis_without_dagrun(simple_dag_bag,
                                                           [State.UP_FOR_RETRY],
                                                           State.FAILED)
@@ -1840,6 +1904,7 @@ class SchedulerJob(BaseJob):
         for dag in dagbag.dags.values():
             dag.sync_to_db()
 
+        # 暂停状态的dags
         paused_dag_ids = [dag.dag_id for dag in dagbag.dags.values()
                           if dag.is_paused]
 
@@ -1848,17 +1913,22 @@ class SchedulerJob(BaseJob):
             dag = dagbag.get_dag(dag_id)
             pickle_id = None
             if pickle_dags:
+                # 生成序列化id
                 pickle_id = dag.pickle(session).id
 
             # Only return DAGs that are not paused
+            # 不在暂停中
             if dag_id not in paused_dag_ids:
+                # 生成SimpleDag 加入队列
                 simple_dags.append(SimpleDag(dag, pickle_id=pickle_id))
 
         if len(self.dag_ids) > 0:
+            # 过滤出在在白名单内的非暂停的dags
             dags = [dag for dag in dagbag.dags.values()
                     if dag.dag_id in self.dag_ids and
                     dag.dag_id not in paused_dag_ids]
         else:
+            # 无白名单则去除parent_dag的id
             dags = [dag for dag in dagbag.dags.values()
                     if not dag.parent_dag and
                     dag.dag_id not in paused_dag_ids]
@@ -1873,6 +1943,7 @@ class SchedulerJob(BaseJob):
         for ti_key in ti_keys_to_schedule:
             dag = dagbag.dags[ti_key[0]]
             task = dag.get_task(ti_key[1])
+            # 从定义在code中的dag 内嵌的task 生成指定执行日期的TaskInstance 并存储至db
             ti = models.TaskInstance(task, ti_key[2])
 
             ti.refresh_from_db(session=session, lock_for_update=True)
@@ -1931,6 +2002,7 @@ class BackfillJob(BaseJob):
 
     class _DagRunTaskStatus(object):
         """
+        任务实例状态
         Internal status of the backfill job. This class is intended to be instantiated
         only within a BackfillJob instance and will track the execution of tasks,
         e.g. started, skipped, succeeded, failed, etc. Information about the dag runs
@@ -1977,14 +2049,20 @@ class BackfillJob(BaseJob):
             :param total_runs: Number of total dag runs able to run
             :type total_runs: int
             """
+            # 将要运行的任务 task_instance dict[Tuple[String, String, DateTime], TaskInstance]
             self.to_run = to_run or dict()
+            # 正在运行的任务
             self.started = started or dict()
             self.skipped = skipped or set()
+            # 成功的ti key集合
             self.succeeded = succeeded or set()
             self.failed = failed or set()
             self.not_ready = not_ready or set()
+            # 死锁
             self.deadlocked = deadlocked or set()
+            # Active dag runs list[DagRun]
             self.active_runs = active_runs or list()
+            # set[Datetime] 正在执行的dag的日期
             self.executed_dag_run_dates = executed_dag_run_dates or set()
             self.finished_runs = finished_runs
             self.total_runs = total_runs
@@ -2017,6 +2095,8 @@ class BackfillJob(BaseJob):
 
     def _update_counters(self, ti_status):
         """
+        更新统计信息-->从数据库中获取信息
+        根据正在运行tis
         Updates the counters per state of the tasks that were running. Can re-add
         to tasks to run in case required.
         :param ti_status: the internal status of the backfill job tasks
@@ -2056,6 +2136,7 @@ class BackfillJob(BaseJob):
                     ti
                 )
                 session = settings.Session()
+                # 状态重置
                 ti.set_state(State.SCHEDULED, session=session)
                 session.close()
                 ti_status.started.pop(key)
@@ -2063,12 +2144,13 @@ class BackfillJob(BaseJob):
 
     def _manage_executor_state(self, started):
         """
+        管理任务状态
         Checks if the executor agrees with the state of task instances
         that are running
         :param started: dict of key, task to verify
         """
         executor = self.executor
-
+        # 获取taski执行结果缓存的items
         for key, state in list(executor.get_event_buffer().items()):
             if key not in started:
                 self.log.warning(
@@ -2081,7 +2163,7 @@ class BackfillJob(BaseJob):
             ti.refresh_from_db()
 
             self.log.debug("Executor state: %s task %s", state, ti)
-
+            # 状态不匹配，ti置错并发email
             if state == State.FAILED or state == State.SUCCESS:
                 if ti.state == State.RUNNING or ti.state == State.QUEUED:
                     msg = ("Executor reports task instance {} finished ({}) "
@@ -2093,6 +2175,7 @@ class BackfillJob(BaseJob):
     @provide_session
     def _get_dag_run(self, run_date, session=None):
         """
+        根据dagid+date返回一个 dag_run
         Returns a dag run for the given run date, which will be matched to an existing
         dag run if available or create a new dag run otherwise. If the max_active_runs
         limit is reached, this function will return None.
@@ -2105,6 +2188,7 @@ class BackfillJob(BaseJob):
         run_id = BackfillJob.ID_FORMAT_PREFIX.format(run_date.isoformat())
 
         # consider max_active_runs but ignore when running subdags
+        # 在运行子dag时忽略max_active_runs
         respect_dag_max_active_limit = (True
                                         if (self.dag.schedule_interval and
                                             not self.dag.is_subdag)
@@ -2152,6 +2236,8 @@ class BackfillJob(BaseJob):
     @provide_session
     def _task_instances_for_dag_run(self, dag_run, session=None):
         """
+        根据dag_run返回其task_instances，是从db ti表查询
+        获取任务实例
         Returns a map of task instance key to task instance object for the tasks to
         run in the given dag run.
         :param dag_run: the dag run to get the tasks from
@@ -2181,6 +2267,7 @@ class BackfillJob(BaseJob):
         return tasks_to_run
 
     def _log_progress(self, ti_status):
+        # 打印任务完成情况
         msg = ' | '.join([
             "[backfill progress]",
             "finished run {0} of {1}",
@@ -2215,6 +2302,7 @@ class BackfillJob(BaseJob):
                                          pickle_id,
                                          start_date=None, session=None):
         """
+        处理任务实例 为dag_runs 填充生成 task_instances
         Process a set of task instances from a set of dag runs. Special handling is done
         to account for different task instance states that could be present when running
         them in a backfill process.
@@ -2233,7 +2321,7 @@ class BackfillJob(BaseJob):
         """
 
         executed_run_dates = []
-
+        # 无死锁时循环
         while ((len(ti_status.to_run) > 0 or len(ti_status.started) > 0) and
                 len(ti_status.deadlocked) == 0):
             self.log.debug("*** Clearing out not_ready list ***")
@@ -2243,13 +2331,14 @@ class BackfillJob(BaseJob):
             # or leaf to root, as otherwise tasks might be
             # determined deadlocked while they are actually
             # waiting for their upstream to finish
+            # 根据拓扑关系安排任务队列
             for task in self.dag.topological_sort():
                 for key, ti in list(ti_status.to_run.items()):
                     if task.task_id != ti.task_id:
                         continue
 
                     ti.refresh_from_db()
-
+                    # 根据taskId从dag中get到定义的task 即算子operator
                     task = self.dag.get_task(ti.task_id)
                     ti.task = task
 
@@ -2260,6 +2349,7 @@ class BackfillJob(BaseJob):
 
                     # guard against externally modified tasks instances or
                     # in case max concurrency has been reached at task runtime
+                    # 设置状态
                     if ti.state == State.NONE:
                         self.log.warning(
                             "FIXME: task instance {} state was set to None externally. This should not happen"
@@ -2321,6 +2411,7 @@ class BackfillJob(BaseJob):
                                 # Skip scheduled state, we are executing immediately
                                 ti.state = State.QUEUED
                                 session.merge(ti)
+                                # taski 加入队列
                                 executor.queue_task_instance(
                                     ti,
                                     mark_success=self.mark_success,
@@ -2449,8 +2540,11 @@ class BackfillJob(BaseJob):
         :param session: the current session object
         :type session: Session
         """
+        # ti_status.to_run为有序字典
         for next_run_date in run_dates:
+            # 获取dag run
             dag_run = self._get_dag_run(next_run_date, session=session)
+            # 获取任务实例
             tis_map = self._task_instances_for_dag_run(dag_run,
                                                        session=session)
             if dag_run is None:
@@ -2458,7 +2552,7 @@ class BackfillJob(BaseJob):
 
             ti_status.active_runs.append(dag_run)
             ti_status.to_run.update(tis_map or {})
-
+        # 所有dag run的任务都放一起
         processed_dag_run_dates = self._process_backfill_task_instances(
             ti_status=ti_status,
             executor=executor,
@@ -2470,6 +2564,7 @@ class BackfillJob(BaseJob):
 
     def _execute(self):
         """
+        入口
         Initializes all components required to run a dag for a specified date range and
         calls helper method to execute the tasks.
         """
@@ -2495,6 +2590,7 @@ class BackfillJob(BaseJob):
             pickle_id = pickle.id
 
         executor = self.executor
+        # 启动executor
         executor.start()
 
         ti_status.total_runs = len(run_dates)  # total dag runs in backfill
@@ -2533,7 +2629,7 @@ class BackfillJob(BaseJob):
 
         self.log.info("Backfill done. Exiting.")
 
-
+# 本地job
 class LocalTaskJob(BaseJob):
 
     __mapper_args__ = {
@@ -2567,10 +2663,11 @@ class LocalTaskJob(BaseJob):
         super(LocalTaskJob, self).__init__(*args, **kwargs)
 
     def _execute(self):
+        # 获取执行器
         self.task_runner = get_task_runner(self)
 
         def signal_handler(signum, frame):
-            """Setting kill signal handler"""
+            """ 信号处理器 Setting kill signal handler"""
             self.log.error("Killing subprocess")
             self.on_kill()
             raise AirflowException("LocalTaskJob received SIGTERM signal")
@@ -2595,8 +2692,10 @@ class LocalTaskJob(BaseJob):
             heartbeat_time_limit = conf.getint('scheduler',
                                                'scheduler_zombie_task_threshold')
             # 外部任务通过循环检测返回码，通过循环监控任务运行返回状态码和发送心跳信号。
+            # 轮询
             while True:
                 # Monitor the task to see if it's done
+                # 可能阻塞
                 return_code = self.task_runner.return_code()
                 if return_code is not None:
                     self.log.info("Task exited with return code %s", return_code)
@@ -2605,6 +2704,7 @@ class LocalTaskJob(BaseJob):
                 # Periodically heartbeat so that the scheduler doesn't think this
                 # is a zombie
                 try:
+                    # 发送心跳-->可能阻塞
                     self.heartbeat()
                     last_heartbeat_time = time.time()
                 except OperationalError:

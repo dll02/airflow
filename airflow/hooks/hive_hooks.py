@@ -175,8 +175,12 @@ class HiveCliHook(BaseHook):
             with NamedTemporaryFile(dir=tmp_dir) as f:
                 f.write(hql.encode('UTF-8'))
                 f.flush()
+                # 编译准备beeline 的链接信息
                 hive_cmd = self._prepare_cli_cmd()
                 hive_conf_params = self._prepare_hiveconf(hive_conf)
+                # 根据设置的参数和hive_conf ，进一步拼接设置beeline 查询命令
+                # 设置 -hiveconf 诸如 mapreduce.job.queuename，mapreduce.job.priority，mapred.job.name
+                # 具体参考hive的beeline cli 查询语法 重点是 拼接出来的cmd 符合hive的查询语法
                 if self.mapred_queue:
                     hive_conf_params.extend(
                         ['-hiveconf',
@@ -200,6 +204,7 @@ class HiveCliHook(BaseHook):
 
                 if verbose:
                     self.log.info(" ".join(hive_cmd))
+                # 启动子进程执行命令
                 sp = subprocess.Popen(
                     hive_cmd,
                     stdout=subprocess.PIPE,
@@ -208,6 +213,7 @@ class HiveCliHook(BaseHook):
                 self.sp = sp
                 stdout = ''
                 while True:
+                    # 设置 标准输出stdout 到airflow 指定的文件内
                     line = sp.stdout.readline()
                     if not line:
                         break
@@ -224,13 +230,13 @@ class HiveCliHook(BaseHook):
     def test_hql(self, hql):
         """
         Test an hql statement using the hive cli and EXPLAIN
-
+        测试执行一个hql的EXPLAIN在hive cli内
         """
         create, insert, other = [], [], []
         for query in hql.split(';'):  # naive
             query_original = query
             query = query.lower().strip()
-
+            # 处理非select 的sql语法
             if query.startswith('create table'):
                 create.append(query_original)
             elif query.startswith(('set ',
@@ -373,6 +379,7 @@ class HiveCliHook(BaseHook):
         :param tblproperties: TBLPROPERTIES of the hive table being created
         :type tblproperties: dict
         """
+        # 从指定文件夹load 数据到一个表中
         hql = ''
         if recreate:
             hql += "DROP TABLE IF EXISTS {table};\n"
